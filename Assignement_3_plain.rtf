@@ -1,0 +1,614 @@
+{\rtf1\ansi\ansicpg1252\cocoartf2638
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fswiss\fcharset0 Helvetica-Bold;\f1\fswiss\fcharset0 Helvetica;\f2\fmodern\fcharset0 Courier;
+\f3\fswiss\fcharset0 Helvetica-Oblique;}
+{\colortbl;\red255\green255\blue255;\red60\green60\blue60;\red60\green118\blue61;\red0\green0\blue255;
+\red160\green32\blue240;\red0\green95\blue206;}
+{\*\expandedcolortbl;;\csgenericrgb\c23529\c23529\c23529;\csgenericrgb\c23529\c46275\c23922;\csgenericrgb\c0\c0\c100000;
+\csgenericrgb\c62745\c12549\c94118;\csgenericrgb\c0\c37255\c80784;}
+\paperw11900\paperh16840\margl1440\margr1440\vieww29140\viewh18680\viewkind0
+\deftab720
+\pard\pardeftab720\sb45\sa75\partightenfactor0
+
+\f0\b\fs30 \cf2 ASSIGNEMENT 2 -- DECODING NEURAL ACTIVITY\
+\pard\pardeftab720\sb30\sa135\partightenfactor0
+
+\f1\b0\fs21 \cf0 In this notebook we will take a look at some tecniques aimed at "reading" neural activity and allowing us to interpet its content and to evaluate how much information it carries about a specific set of stimuli, conditions or states. \
+This LiveScript MATLAB environemt is very similar to the Jupyter notebook you used in the previous assignment. Differently from Python, we do not need to prepare any environment, you can run the code in this script straight away from any Matlab application. \
+You can complete the assignements directly in this notebook or copy any part of the code in anotheratlab LiveScript, another regular script or run it directly from the Command Window. Using a LiveScript like this allows you to insert text, comments or observations, you just need to use the "Text" and "Code" commands at the top to switch between the two modes. \
+\pard\pardeftab720\sb45\sa75\partightenfactor0
+
+\f0\b\fs30 \cf2 DECODING ON A LINEAR TRACK\
+\pard\pardeftab720\sb30\sa135\partightenfactor0
+
+\f1\b0\fs21 \cf0 The main aim of this assignment is to familiarize you with the concept of decoding of neural activty. The idea is that if certain neurons are consistently active whenever a stimulus is present, then by oberving at a later time the same neural activity, we can predict the presence of that stimulus, or more generrally argue that the network is currently expressing the neural representation of that stimulus. For more details about decoding you can read this \
+In the context of the hippocampus and of place cells, the different positions that an animal can occupy in an environment provide the set of external stimuli that is represented in the activity of the cells. Therefore in the following we will see how recording activity from a set of place cells allows us to reconstruct the current position of the animal with some degree of accuracy. \
+\pard\pardeftab720\sb30\sa135\partightenfactor0
+
+\f0\b \cf0 Simulated Place Cells
+\f1\b0  \
+We first generate a place field map to provide a neural representation of the linear environment, much like you have already seen in the previous assignment.  We simulate spike trains as inhomogeneous Poisson processes, with a rate determined by the current animal position. An inhomogeneous Poisson process is a random process where the instantaneous probability to have an event at time  (more precisely, the probability of having an event between times t and t+dt  is given by: \
+\pard\pardeftab720\sb30\sa135\qc\partightenfactor0
+\cf0 \
+\pard\pardeftab720\partightenfactor0
+
+\f0\b\fs23 \cf2 Place Field Properties
+\f2\b0\fs21 \cf0 track_length = 200; \cf3 % the length of our linear track (eg in centimeter)\
+\cf0 average_firing_rate = 5; \cf3 % the peak firing rate, averaged across the population \
+\cf0 n_cells = 20; \cf3 % how many cells we are recording\
+\cf0 pf_centers = rand(n_cells,1) * track_length; \cf3 % the centers of the place fields for all cells drawn randomly with a uniform distribution on the track\
+\cf0 pf_size = gamrnd(10,1, n_cells,1); \cf3 % the size (width) of the place fields, drawn randomly from a gamma distribution \
+\cf0 pf_rate = exprnd(average_firing_rate,n_cells,1); \cf3 % the peak firing rate for each cell, drawn from an exponential distribution\
+
+\f0\b\fs23 \cf2 Build the place field representation 
+\f2\b0\fs21 \cf0 bins=1:track_length;\
+true_firing_rate=zeros(n_cells,track_length);\
+\cf3 %Place Fields have a Gaussian shape\
+\pard\pardeftab720\partightenfactor0
+\cf4 for \cf0 i=1:n_cells\
+    true_firing_rate(i,:)=pf_rate(i).*exp(-(bins-pf_centers(i)).^2/(2*pf_size(i)^2));\
+\cf4 end\
+\pard\pardeftab720\partightenfactor0
+\cf0 \
+imagesc(true_firing_rate)\
+\pard\pardeftab720\sb30\sa135\partightenfactor0
+
+\f0\b\fs23 \cf2 Generate a random trajectory on the track 
+\f1\b0\fs21 \cf0 Let's simulate the trajectory of the virtual mouse on the track. As we are only interested in the periods during which the animal is moving, we will omit the pauses at tehe two ends of the track. The trajectory will therefore consits of laps directly alternating between the two running directions. \
+\pard\pardeftab720\partightenfactor0
+
+\f2 \cf0 n_runs = 2; \
+av_running_speed = 10;\cf3 % the average running speed (in cm/s)\
+\cf0 fps = 10; \cf3 % the number of "video frames" per second \
+\cf0 running_speed_a = chi2rnd(av_running_speed, n_runs,1); \cf3 % running speed in the two directions\
+\cf0 running_speed_b = chi2rnd(av_running_speed, n_runs,1); \
+\
+x = [];\
+\pard\pardeftab720\partightenfactor0
+\cf4 for \cf0 i=1:n_runs\
+run_length = numel(bins) * fps / running_speed_a(i);\
+run1 = linspace(0.1, numel(bins), round(run_length));\
+run_length = numel(bins) * fps / running_speed_b(i);\
+run2 = linspace(numel(bins), 0.1, round(run_length));\
+x=cat(1,x,run1(:),run2(:));\
+\cf4 end\
+\pard\pardeftab720\partightenfactor0
+\cf0 t=(1:numel(x))./fps;  \
+\
+\pard\pardeftab720\sb30\sa135\partightenfactor0
+
+\f0\b\fs23 \cf2 Generate spikes for cells
+\f1\b0\fs21 \cf0 Combining the rate maps and the trajectory generated above we can now simulate the spiking activity of our neural population.\
+\pard\pardeftab720\partightenfactor0
+
+\f2 \cf0 sampling_rate = 10;\cf3 %This corresponds to time windows of 100ms, a natural choice in the case of hippocampal data. \
+\cf0 t_sampling = (1:numel(t))./sampling_rate;\
+x_sampling = ceil(interp1(t, x,t_sampling,\cf5 'linear'\cf0 ,\cf5 'extrap'\cf0 ))';\
+noise_firing_rate = 1; \cf3 % the baseline noise firing rate\
+\cf0 \
+spikes = zeros(n_cells,numel(t_sampling));\
+\
+\pard\pardeftab720\partightenfactor0
+\cf4 for \cf0 i=1:n_cells\
+    inst_rate = true_firing_rate(i,x_sampling) + randn(1,numel(x_sampling))*noise_firing_rate;\
+    inst_rate(inst_rate<0) = 0;\
+    spikes_loc = poissrnd(inst_rate/sampling_rate);\
+    spikes(i,:)=spikes_loc;\
+    \
+\cf4 end\
+\pard\pardeftab720\partightenfactor0
+\cf0 \
+spy(spikes)\
+axis \cf5 square\
+\cf0 \
+\pard\pardeftab720\sb30\sa135\partightenfactor0
+
+\f0\b\fs23 \cf2 Reconstruct place-related activity from sampled activity
+\f1\b0\fs21 \cf0 We are now ready to proceed with the first step towards decoding of position. We will start by looking at how different locations are encoded by the neurons. To do that we will collect all the activity emitted by the neurons in a specific location and average it to obtain a Population Vector (PV) associated to that position, or equivalently we will say that the firing rate combination of this PV represent that location. Since we will do this for every location in the environment we will end up having the PVs associated to every portion of the environment. \
+\pard\pardeftab720\partightenfactor0
+
+\f2 \cf3 % To estimate the PVs we will use bins of some cms in length \
+\cf0 bin_size=4; \cf3 % Size in cm of bins to use for encoding\
+\cf0 n_bins = track_length/bin_size;\
+\
+estim_firing_rate=zeros(n_cells,n_bins);\
+\
+\cf3 % Rescale the trajectory to the new binning \
+\cf0 x_sampling_binned = ceil(x_sampling/(bin_size));\
+\
+\cf3 % Calculate the PV for every bin\
+\pard\pardeftab720\partightenfactor0
+\cf4 for \cf0 j=1:n_bins\
+    \
+    X_bin=find(x_sampling_binned==j);\
+    estim_firing_rate(:,j)=sum(spikes(:,X_bin),2)*sampling_rate./(numel(X_bin));\
+    \
+    \
+\cf4 end\
+\pard\pardeftab720\partightenfactor0
+\cf0 \
+imagesc(estim_firing_rate)\
+imagesc(true_firing_rate)\
+\pard\pardeftab720\sb30\sa135\partightenfactor0
+
+\f1 \cf0 Since the spikes we are using to estimate the track representation are a finite sample of the '"ground-truth" maps, and moreover we have added random noise in the process, the reconstructed maps will not be identical to the original ones. Actually, they can be quite different, especially in real experiments where the amount of data is limited, the behaviour of the animal is not completely controlled, neural activity is subject to high level of noise, and obviously we don't have access to the "ground-truth". \
+\pard\pardeftab720\sb30\sa135\partightenfactor0
+
+\f0\b \cf0 Question 1: 
+\f1\b0 In the context of the simulated data, one can look at the effects of data amount and level of noise on the accuracy of the PV estimation. Build a table expressing the relationship between noise level, amount of recorded runs and the difference between the real and the reconstructed maps.  \
+\pard\pardeftab720\partightenfactor0
+
+\f2 \cf3 % We can evaluate the difference using euclidean distance, for example \
+\cf0 max(sqrt((true_firing_rate(:,1:bin_size:end)'-estim_firing_rate').^2),[],\cf5 'all'\cf0 )\
+\
+\pard\pardeftab720\sb30\sa135\partightenfactor0
+
+\f0\b \cf0 BAYESIAN DECODING\
+\pard\pardeftab720\sb30\sa135\partightenfactor0
+
+\f1\b0 \cf0 Now that we have estimated the PVs associated to the track environment, we can move on to decoding. \
+A very common approach is given by the so called Bayesian Decoding ({\field{\*\fldinst{HYPERLINK "https://www.nature.com/articles/nrn2578"}}{\fldrslt \cf6 Quiroga}} and {\field{\*\fldinst{HYPERLINK "https://www.nature.com/articles/35039062"}}{\fldrslt \cf6 Pouget}} for a review on the topic). Let 
+\f3\i P(s)
+\f1\i0  denote the probability of presentation of stimulus 
+\f3\i s
+\f1\i0  (belonging to a set 
+\f3\i S
+\f1\i0 ) and 
+\f3\i P (r|s)
+\f1\i0  denote the conditional probability of obtaining a population response 
+\f3\i r
+\f1\i0  (out of a response set 
+\f3\i R
+\f1\i0 ) when stimulus 
+\f3\i s
+\f1\i0  is presented. Using Bayes' theorem, we obtain:\
+\
+This equation gives the posterior probability that, given a response 
+\f3\i r
+\f1\i0 , stimulus 
+\f3\i s
+\f1\i0  was presented. Bayesian decoding calculates from this posterior probability distribution a single prediction of the most likely stimulus \
+\
+In our case the set of stimuli 
+\f3\i S 
+\f1\i0 are the different locations in the environment. Since we are looking for the maximum, we can ignore the denominator term P(r), as it is common to all positions 
+\f3\i s 
+\f1\i0 (luckily for us, as it is generally very difficult to estimate experimentally)
+\f3\i . 
+\f1\i0 Moreover we will assume that every position s is equiprobable, so we can also ignore the term P(s). Assuming that our neurons are independant (a banality in our simulations, but not necessarily true when considering real neurons), we are left with: \
+\
+And here is the code to perform bayesian decoding: \
+\pard\pardeftab720\sb30\sa135\partightenfactor0
+
+\f0\b \cf0 \
+\pard\pardeftab720\partightenfactor0
+
+\f2\b0 \cf3 %% First, we generate a new set of runs and spikes from the same cells to use for the decoding, so that we avoid overfitting problems by using the same data for training and testing. \
+\cf0 n_runs_deco = 10;\
+\
+av_running_speed = 10;\cf3 % the average running speed (in cm/s)\
+\cf0 fps = 10; \cf3 % the number of "video frames" per second \
+\cf0 running_speed_a = chi2rnd(av_running_speed, n_runs_deco,1); \cf3 % running speed in the two directions\
+\cf0 running_speed_b = chi2rnd(av_running_speed, n_runs_deco,1); \
+\
+x = [];\
+\pard\pardeftab720\partightenfactor0
+\cf4 for \cf0 i=1:n_runs_deco\
+run_length = numel(bins) * fps / running_speed_a(i);\
+run1 = linspace(0.1, numel(bins), round(run_length));\
+run_length = numel(bins) * fps / running_speed_b(i);\
+run2 = linspace(numel(bins), 0.1, round(run_length));\
+x=cat(1,x,run1(:),run2(:));\
+\cf4 end\
+\pard\pardeftab720\partightenfactor0
+\cf0 t=(1:numel(x))./fps;  \
+\
+sampling_rate = 10;\cf3 %This corresponds to time windows of 100ms, a natural choice in the case of hippocampal data. \
+\cf0 t_sampling = (1:numel(t))./sampling_rate;\
+x_sampling = ceil(interp1(t, x,t_sampling,\cf5 'linear'\cf0 ,\cf5 'extrap'\cf0 ))';\
+noise_firing_rate = 1; \cf3 % the baseline noise firing rate\
+\cf0 \
+spikes = zeros(n_cells,numel(t_sampling));\
+\
+\pard\pardeftab720\partightenfactor0
+\cf4 for \cf0 i=1:n_cells\
+    inst_rate = true_firing_rate(i,x_sampling) + randn(1,numel(x_sampling))*noise_firing_rate;\
+    inst_rate(inst_rate<0) = 0;\
+    spikes_loc = poissrnd(inst_rate/sampling_rate);\
+    spikes(i,:)=spikes_loc;\
+    \
+\cf4 end\
+\pard\pardeftab720\partightenfactor0
+\cf0 \
+\cf3 % Here we perform the decoding using the data just generated\
+\cf0 x_decoded=zeros(size(spikes,2),1);\
+\pard\pardeftab720\partightenfactor0
+\cf4 for \cf0 t_bin=1:size(spikes,2)\
+    \
+    \cf4 if\cf0 (sum(spikes(:,t_bin),1)>0) \cf3 % Check if the time window contains spikes\
+\pard\pardeftab720\partightenfactor0
+\cf0     \
+    Post_p=NaN(size(estim_firing_rate,2),1);\
+    \cf4 for \cf0 i=1:size(estim_firing_rate,2)\
+        \cf3 % Note that we work with log so that we can sum probabilities\
+\cf0         \cf3 % instead of multiplying them \
+\cf0         Post_p(i)=sum(log(poisspdf(spikes(:,t_bin),estim_firing_rate(:,i)/sampling_rate)));\
+       \
+    \cf4 end\
+\cf0 \
+    x_decoded(t_bin) = find(Post_p==nanmax(Post_p),1,\cf5 'first'\cf0 );\
+    \cf4 else\
+\cf0     x_decoded(t_bin) = NaN;   \
+    \cf4 end\
+end\
+\cf0 \
+\
+\pard\pardeftab720\sb30\sa135\partightenfactor0
+
+\f0\b \cf0 Question 2: 
+\f1\b0 What is the reason for calculating a log-probability instead of a probability? \
+\
+\pard\pardeftab720\partightenfactor0
+
+\f2 \cf3 %Plot the real trajectory agains the reconstructed one\
+\cf0 plot(t_sampling,x_decoded*bin_size,t_sampling,x_sampling)\
+\
+\cf3 %Distribution of errors\
+\cf0 histogram(sqrt(((x_sampling-x_decoded*bin_size).^2)))\
+\
+\cf3 %To reduce the effects of the few large errors, the median error, rather\
+%than the mean error, is a commonly used measure of decoding precision\
+\cf0 nanmedian(sqrt(((x_sampling-x_decoded*bin_size).^2)))\
+\
+\
+\
+\pard\pardeftab720\sb30\sa135\partightenfactor0
+
+\f0\b \cf0 Question 3: 
+\f1\b0 how much data is required to reduce the median error? Use smaller fractions of data to estimate PVs and measure how this affects the decoding error. Use 30 cells, between 1 and 20 runs for the estimation of the place fields and use 2 levels for noise (ex. 1 and 5).     \
+
+\f0\b Question 4: 
+\f1\b0 how does the reconstruction error scales with the number of available place cells? Having many cells representing an environment allows for more information to be found in the same time window and reduces the effect of random noise. But how many place cells would be requied on average to accurately represent position on a linear track? Quantify the average decoding error obtainable with different population sizes and find for what value it reaches its asymptot. You can use 5 runs for the encoding and a noise level of 5. \
+
+\f0\b Question 5: 
+\f1\b0 Bayesian decoding is not the only available option ({\field{\*\fldinst{HYPERLINK "https://www.cambridge.org/core/journals/quarterly-reviews-of-biophysics/article/decoding-neuronal-firing-and-modelling-neural-networks/B6387621EFFDFCF5ADE95C965A31D919"}}{\fldrslt \cf6 Abbott}}). Another possibility is to directly compare the activity present in a given time window with all PVs and find which one is the more "similar" (then the associated position would be the decoded one). As a definition of similarity one can use euclidean distance, correlation, cosine distance. Compare the performance of different decoding approaches. For example use Bayesian and correlation-based decoding. Run the same analysis of Question 4 (different cell sample size) with the two methods. \
+\pard\pardeftab720\partightenfactor0
+
+\f2 \cf3 % You can use the pdist2 built-in function to explore different similarity\
+% measures. Here I am comparing the PV for bin i to the activity at time\
+% t_bin\
+\cf0 pdist2(estim_firing_rate(:,i)',spikes(:,t_bin)',\cf5 'correlation'\cf0 );\
+\pard\pardeftab720\sb30\sa135\partightenfactor0
+
+\f0\b\fs23 \cf2 Multiple place field case
+\f1\b0\fs21 \cf0 The case presented above is the most ideal one can think of for performing decoding of position: a simple 1D environment with place cells being active in only one location.\
+We now want to see what are the effects on decoding of more heterogeneous conditions. We start with allowing each place cell to develop, with a certain probability, a second place field in a new location. We can generate such map with the following code:\
+\pard\pardeftab720\partightenfactor0
+
+\f2 \cf0 track_length = 200; \cf3 % the length of our linear track (eg in centimeter)\
+\cf0 average_firing_rate = 5; \cf3 % the peak firing rate, averaged across the population \
+\cf0 n_cells = 10; \cf3 % how many cells we are recording\
+\cf0 pf_centers = rand(n_cells,2) * track_length; \cf3 % the centers of the place fields for all cells drawn randomly with a uniform distribution on the track\
+\cf0 pf_size = gamrnd(10,1, n_cells,2); \cf3 % the size (width) of the place fields, drawn randomly from a gamma distribution \
+\cf0 pf_rate = exprnd(average_firing_rate,n_cells,2); \cf3 % the peak firing rate for each cell, drawn from an exponential distribution\
+\cf0 \
+prob_2field=0.2; \cf3 %This is the probability that a cell will have 2 fields instead of one\
+\cf0 \
+\
+bins=1:track_length;\
+true_firing_rate=zeros(n_cells,track_length);\
+\
+\pard\pardeftab720\partightenfactor0
+\cf4 for \cf0 i=1:n_cells\
+    n_fields=1+(rand(1)<prob_2field);\
+    \cf4 for \cf0 j=1:n_fields\
+    true_firing_rate(i,:)=true_firing_rate(i,:)+pf_rate(i,j).*exp(-(bins-pf_centers(i,j)).^2/(2*pf_size(i,j)^2));\
+    \cf4 end\
+end\
+\pard\pardeftab720\partightenfactor0
+\cf0 \
+imagesc(true_firing_rate)\
+\pard\pardeftab720\sb30\sa135\partightenfactor0
+
+\f0\b \cf0 Question 6: 
+\f1\b0 Compare the performance of position reconstruction with different values of 
+\f3\i prob_2field. 
+\f1\i0 You will see that in most cases this manipulation will improve your decoding but not always. For example, run the decoding for 
+\f3\i prob_2field 
+\f1\i0 in the range [0 1] and modulate the robustness of the representation by for example using very few or all cells, or very little amount of avilable data (n_runs = 2) in the presence of random neural noise. Can you describe the ways in which the presence of additional fields affecting decoding?\
+
+\f0\b Question 7: 
+\f1\b0 Is Bayesian decoding more or less affected than similarity-based methods? \
+
+\f0\b 2D ENVIRONMENT (Optional)\
+\pard\pardeftab720\sb30\sa135\partightenfactor0
+
+\f1\b0 \cf0 Similarly we can ask what effect has increasing the dimensionality of the environment, by for example using a square box instead of a linear track to simulate the movements of the mouse. You can use the following code to simulate the activity of a group of place cells in a 2D environment.\
+We start as usual by defining the relevant variables: \
+\pard\pardeftab720\partightenfactor0
+
+\f2 \cf0 room_size = 100; \cf3 % the side of our square environment (eg in centimeter)\
+\cf0 average_firing_rate = 5; \cf3 % the peak firing rate, averaged across the population \
+\cf0 n_cells = 100; \cf3 % how many cells we are recording\
+\cf0 pf_centers = [rand(n_cells,1) * room_size rand(n_cells,1) * room_size ]; \cf3 % the centers of the place fields for all cells drawn randomly with a uniform distribution on the track\
+\cf0 pf_size = gamrnd(10,1, n_cells,1); \cf3 % the size (width) of the place fields, drawn randomly from a gamma distribution \
+\cf0 pf_rate = exprnd(average_firing_rate,n_cells,1); \cf3 % the peak firing rate for each cell, drawn from an exponential distribution\
+\cf0 \
+\
+\pard\pardeftab720\sb30\sa135\partightenfactor0
+
+\f1 \cf0 Let's build place fields in 2D\
+\pard\pardeftab720\partightenfactor0
+
+\f2 \cf0 bins=1:room_size;\
+true_firing_rate=zeros(room_size*room_size,n_cells);\
+\
+[bin_Y,bin_X]=meshgrid(bins);\
+\
+bin_Y=bin_Y(:);\
+bin_X=bin_X(:);\
+\cf3 % Place Fields are two-dimensional symmetric Gaussians \
+\pard\pardeftab720\partightenfactor0
+\cf4 for \cf0 i=1:n_cells\
+    true_firing_rate(:,i)=pf_rate(i).*exp(-((bin_Y-pf_centers(i,2)).^2 \cf4 ...\
+\pard\pardeftab720\partightenfactor0
+\cf0         +(bin_X-pf_centers(i,1)).^2)/(2*pf_size(i)^2));\
+\pard\pardeftab720\partightenfactor0
+\cf4 end\
+\pard\pardeftab720\partightenfactor0
+\cf0 \
+true_firing_rate = reshape(true_firing_rate,room_size,room_size,n_cells);\
+\pard\pardeftab720\sb30\sa135\partightenfactor0
+
+\f1 \cf0 We can use a "slider" (Control, above) to visualize the 2D place field of different cells. \
+\pard\pardeftab720\partightenfactor0
+
+\f2 \cf0 i=24\
+imagesc(true_firing_rate(:,:,i))\
+\
+\pard\pardeftab720\sb30\sa135\partightenfactor0
+
+\f1 \cf0 Here we build a 2-dimensional trajectory:\
+\pard\pardeftab720\partightenfactor0
+
+\f2 \cf0 run_length = 1000; \cf3 % In seconds\
+\cf0 av_running_speed = 10;\cf3 % the average running speed (in cm/s)\
+\cf0 fps = 10; \cf3 % the number of "video frames" per second \
+\cf0 run_bins = run_length*fps;\
+\
+running_speed = chi2rnd(av_running_speed, run_bins,1); \cf3 % running speed in the two directions\
+\cf0 \
+\cf3 % Random initial position and direction \
+\cf0 xy_pos = zeros(run_bins,2);\
+xy_pos(1,:) = [rand(1) rand(1)]*room_size;\
+\
+direction = rand(1)*2*pi;\
+\
+\pard\pardeftab720\partightenfactor0
+\cf4 for \cf0 t=2:run_bins\
+    direction = direction + rand(1)*pi/4 - pi/8; \cf3 % Direction changes smoothly in time\
+\pard\pardeftab720\partightenfactor0
+\cf0     xy_pos(t,:) = xy_pos(t-1,:)+running_speed(t)/fps*[cos(direction) sin(direction)];\
+\cf3 % Check if the new position is within the box boundaries, otherwise pick anothe one    \
+\pard\pardeftab720\partightenfactor0
+\cf4 while\cf0 (sum(xy_pos(t,:)>room_size) || sum(xy_pos(t,:)<0))\
+    direction = rand(1)*2*pi;\
+    xy_pos(t,:) = xy_pos(t-1,:)+running_speed(t)*[cos(direction) sin(direction)];\
+\cf4 end\
+\pard\pardeftab720\partightenfactor0
+\cf0     \
+\
+\pard\pardeftab720\partightenfactor0
+\cf4 end\
+\pard\pardeftab720\partightenfactor0
+\cf0 t=(1:size(xy_pos,1))./fps;  \
+\
+plot(xy_pos(:,1),xy_pos(:,2))\
+\
+\pard\pardeftab720\sb30\sa135\partightenfactor0
+
+\f1 \cf0 And as before we can generate spiking activity along the trajectory.\
+\pard\pardeftab720\partightenfactor0
+
+\f2 \cf0 sampling_rate = 10;\
+t_sampling = (1:numel(t))./sampling_rate;\
+xy_sampling = zeros(size(xy_pos));\
+xy_sampling(:,1) = ceil(interp1(t, xy_pos(:,1),t_sampling,\cf5 'linear'\cf0 ,\cf5 'extrap'\cf0 ))';\
+xy_sampling(:,2) = ceil(interp1(t, xy_pos(:,2),t_sampling,\cf5 'linear'\cf0 ,\cf5 'extrap'\cf0 ))';\
+\
+noise_firing_rate = 0.1; \cf3 % the baseline noise firing rate\
+\cf0 \
+spikes = zeros(n_cells,numel(t_sampling));\
+\
+\pard\pardeftab720\partightenfactor0
+\cf4 for \cf0 i=1:n_cells\
+    \cf4 for \cf0 t=1:numel(t_sampling)\
+    inst_rate = true_firing_rate(xy_sampling(t,2),xy_sampling(t,1),i) + noise_firing_rate;\
+    spikes_loc = poissrnd(inst_rate/sampling_rate);\
+    spikes(i,t)=spikes_loc;\
+    \cf4 end\
+end\
+\pard\pardeftab720\partightenfactor0
+\cf0 \
+spy(spikes)\
+axis \cf5 square\
+\pard\pardeftab720\sb30\sa135\partightenfactor0
+
+\f1 \cf0 And finally we can estimate the neural representation from the "recorded" activity, equivalently to what we did before, just with an additional dimension.  \
+\pard\pardeftab720\partightenfactor0
+
+\f2 \cf0 bin_size=10; \cf3 % Size in cm of bins to use for decoding\
+\cf0 n_bins = room_size/bin_size;\
+\
+estim_firing_rate=zeros(n_bins,n_bins,n_cells);\
+\
+xy_sampling_binned = ceil(xy_sampling/(bin_size));\
+\
+\
+\
+\pard\pardeftab720\partightenfactor0
+\cf4 for \cf0 jx=1:n_bins\
+    \cf4 for \cf0 jy=1:n_bins\
+    XY_bin=find(xy_sampling_binned(:,1)==jx & xy_sampling_binned(:,2)==jy);\
+    estim_firing_rate(jy,jx,:)=sum(spikes(:,XY_bin),2)*sampling_rate./(numel(XY_bin));\
+    \cf4 end\cf0     \
+    \
+\cf4 end\
+\pard\pardeftab720\partightenfactor0
+\cf0 \
+\
+i=57\
+imagesc(estim_firing_rate(:,:,i))\
+imagesc(true_firing_rate(:,:,i))\
+\pard\pardeftab720\sb30\sa135\partightenfactor0
+
+\f0\b \cf0 Question 8: 
+\f1\b0 The addition of an extra-dimension has a major effect on the computational complexity of both estimating PVs representing different locations and on the precision with wich one can decode position. Given equivalent amount of noise and place field properties, find how many cells are approximately required to acheive the same decoding precision of the linear track (you can use an arbitrarily long trajectory).\
+
+\f0\b Question 9: 
+\f1\b0 Having the animal thoroughly covering the entire environment is also an issue when in 2-dimensions. Using spatial binning of different size, estimate how long the trajectory should be so that each bin is visited at least twice.  \
+\pard\pardeftab720\sb30\sa135\partightenfactor0
+
+\f0\b\fs23 \cf2 REACTIVATIONS AND REPLAY (Optional)
+\f1\b0\fs21 \cf0 The use of decoding methods is not limited to measure the amount of information that a neural population carries about a specific set of stimuli, or to predict what stimulus is present at a given time. It is extremely useful to interpret the content of neural activity when no stimulus is present and such activity is spontaneously generated by the network and is not elicited by a specific stimulus. \
+In the case of the hippocampus it has now been extensively observed that during rest periods (either while the animal is standing still, waiting somewhere, or while it is sleeping) place cells reactivate specific patterns of activity corresponding to sequences of locations in the environment. This phenomenon, called "replay" is thought to be critical for the formation of memory, for the acquisition of novel knowledge and for the reorganization of different sorts of information in the brain (You can read {\field{\*\fldinst{HYPERLINK "https://www.sciencedirect.com/science/article/pii/S0166223610000172?via%3Dihub"}}{\fldrslt \cf6 this}} for an overview on this vast and ebullient field of research).    \
+Here we want simulate the occurrence of such reactivation events. Some of them will actually contain sequences, that is, the neural activity will represents a series of locations in the order they appear on the linear track. Other reactivation events will instead contain activity representing locations of the linear track, but these locations will be randomly drawn, so they will present no clear ordering. \
+Let's generate these events:   \
+\pard\pardeftab720\partightenfactor0
+
+\f2 \cf0 spikes_react_events = cell(200,1); \cf3 %200 reactivation events\
+\cf0 \
+\pard\pardeftab720\partightenfactor0
+\cf4 for \cf0 event=1:200\
+\
+sampling_rate = 100;\
+\
+t_react = 1:100;\
+\
+\
+\
+noise_x_react=5; \cf3 % Noise in the reactivation of the sequence\
+\pard\pardeftab720\partightenfactor0
+\cf0 noise_t_react=5; \cf3 % Noise in the timing of the spikes \
+\cf0 \
+\pard\pardeftab720\partightenfactor0
+\cf4 if\cf0 (event<=100)\
+    \cf3 % Generate "real" sequences for the first half of events\
+\pard\pardeftab720\partightenfactor0
+\cf0     x_start = rand(1)*track_length; \cf3 % Starting point\
+\cf0     x_end = rand(1)*track_length;\cf3 % Ending point\
+\cf0     x_react = ceil(linspace(x_start,x_end,100)+randn(1,100)*noise_x_react)';\
+\pard\pardeftab720\partightenfactor0
+\cf4 elseif\cf0 (event>100)\
+    \cf3 % Pick locations randomly for the second half \
+\pard\pardeftab720\partightenfactor0
+\cf0     x_react = ceil(rand(100,1)*track_length);\
+\pard\pardeftab720\partightenfactor0
+\cf4 end\
+\pard\pardeftab720\partightenfactor0
+\cf0 \
+x_react(x_react<1)=1;\
+x_react(x_react>track_length)=track_length;\
+\
+noise_firing_rate = 0.1; \cf3 % the baseline noise firing rate\
+\cf0 \
+spikes_react = zeros(n_cells,numel(t_react));\
+\
+\cf3 % Generate spikes according to the location being reactivated in this event\
+\pard\pardeftab720\partightenfactor0
+\cf4 for \cf0 i=1:n_cells\
+    inst_rate = true_firing_rate(i,x_react) + randn(1,numel(x_react))*noise_firing_rate;\
+    inst_rate(inst_rate<0) = 0;\
+    spikes_loc = find(poissrnd(inst_rate/sampling_rate));\
+    spikes_loc = spikes_loc + round(randn(numel(spikes_loc),1)*noise_t_react);\
+    spikes_loc = spikes_loc(ismember(spikes_loc,1:100));\
+    spikes_react(i,spikes_loc)=1;\
+    \
+\cf4 end\
+\pard\pardeftab720\partightenfactor0
+\cf3 % Put the data in a cell-array\
+\cf0 spikes_react_events\{event\} = spikes_react;\
+\
+\pard\pardeftab720\partightenfactor0
+\cf4 end\
+\pard\pardeftab720\partightenfactor0
+\cf0 \
+\cf3 % Reorder cells in terms of the position of their place field on the track \
+\cf0 [~,pf_order]=sort(pf_centers,\cf5 'ascend'\cf0 );\
+\
+\cf3 %We can use this reordering to "visualize the reactivation"\
+% An example of a sequential reactivation \
+\cf0 Event_Spikes=spikes_react_events\{2\};\
+spy(Event_Spikes(pf_order,:))\
+\
+\cf3 % An example of a non-sequential reactivation\
+\cf0 Event_Spikes=spikes_react_events\{102\};\
+spy(Event_Spikes(pf_order,:))\
+\
+\pard\pardeftab720\sb30\sa135\partightenfactor0
+
+\f1 \cf0 We will now decode the activity contained in these events and try to detect sequential activation looking at the correlation between time within the event and decoded position.  \
+\pard\pardeftab720\partightenfactor0
+
+\f2 \cf0 t_resize = 10; \cf3 % We use spikes from multiple time windows for the decoding\
+\cf0 \
+reactivation_slope = zeros(200,1);\
+\pard\pardeftab720\partightenfactor0
+\cf4 for \cf0 event=1:200\
+\
+    spikes_react = spikes_react_events\{event\};\
+    \
+\
+    spikes_react_sampled = zeros(n_cells,size(spikes_react,2)/t_resize);\
+\
+\pard\pardeftab720\partightenfactor0
+\cf3 % We generate a new spike matrix with the re-sized window\
+\pard\pardeftab720\partightenfactor0
+\cf4 for \cf0 t_r=1:100/t_resize\
+spikes_react_sampled(:,t_r) = sum(spikes_react(:,(t_r-1)*10+1:(t_r)*10),2);\
+\cf4 end\
+\pard\pardeftab720\partightenfactor0
+\cf0 \
+\cf3 %And then we perform the same Bayesian decoding as before \
+\cf0 x_decoded=zeros(size(spikes_react_sampled,2),1);\
+\pard\pardeftab720\partightenfactor0
+\cf4 for \cf0 t_bin=1:size(spikes_react_sampled,2)\
+    \
+    \cf4 if\cf0 (sum(spikes_react_sampled(:,t_bin),1)>0) \cf3 % Check if the time window contains spikes\
+\pard\pardeftab720\partightenfactor0
+\cf0     \
+    Post_p=NaN(size(estim_firing_rate,2),1);\
+    \cf4 for \cf0 i=1:size(estim_firing_rate,2)\
+        \
+        Post_p(i)=sum(log(poisspdf(spikes_react_sampled(:,t_bin),estim_firing_rate(:,i)/sampling_rate*t_resize)));\
+       \
+    \cf4 end\
+\cf0 \
+    x_decoded(t_bin) = find(Post_p==nanmax(Post_p),1,\cf5 'first'\cf0 );\
+    \cf4 else\
+\cf0     x_decoded(t_bin) = NaN;   \
+    \cf4 end\
+end\
+\cf0 \
+\
+\
+\cf3 % Correlation between occurrence time of the spike and decoded position \
+\cf0 [rr,pp] = corr((1:numel(x_decoded))',x_decoded);\
+\
+reactivation_slope(event) = pp;\
+\
+\
+\pard\pardeftab720\partightenfactor0
+\cf4 end\
+\pard\pardeftab720\partightenfactor0
+\cf0 \
+\
+\pard\pardeftab720\sb150\sa135\partightenfactor0
+
+\f0\b \cf0 Question 10: 
+\f1\b0 Can you estimate the amount of times this criterion would label as a sequence a non-sequential event?  \
+\pard\pardeftab720\sb30\sa135\partightenfactor0
+
+\f0\b \cf0 Question 11: 
+\f1\b0 Can you think of a better way to define a sequence?\
+\
+}
